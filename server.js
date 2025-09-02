@@ -3,7 +3,6 @@ const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const aboutRoutes = require("./routes/AboutUSRoute");
 const enquiryRoutes = require('./routes/EnquiryRoutes');
 const contentRoutes = require("./routes/contentRoutes");
 const mentorRoutes = require("./routes/ourMentorRoute");
@@ -15,6 +14,8 @@ const interviewRoutes = require("./routes/interviewRoute");
 const courseModuleRoutes = require('./routes/courseModuleRoutes');
 const HomeScreenRoute =require('./routes/homeScreenRoutes')
 const calendarRoutes = require("./routes/calendarRoutes");
+const aboutRoutes = require("./routes/AboutUSRoute");
+
 
 
 
