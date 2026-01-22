@@ -14,6 +14,7 @@ const attendanceSchema = new mongoose.Schema({
       timing: String,
       studentName: String,
       enrollmentId: String,
+      userId: String,
       status: {
         type: String,
         enum: ["present", "absent", "Present", "Absent"],

@@ -25,9 +25,9 @@ const enrollmentSchema = new mongoose.Schema({
 
 // Certificate Schema
 const certificateSchema = new mongoose.Schema({
-  enrolledId: { type: mongoose.Schema.Types.ObjectId, ref: 'Enrollment', required: true },
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'UserRegister', required: true },
-  certificateFile: { type: String, required: true }, // Cloudinary URL
+  enrolledId: { type: mongoose.Schema.Types.ObjectId, ref: 'Enrollment', },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'UserRegister', },
+  certificateFile: { type: String, }, // Cloudinary URL
   status: { 
     type: String, 
     enum: ['Pending', 'Approved', 'Rejected'], 
@@ -39,8 +39,8 @@ const certificateSchema = new mongoose.Schema({
 
 const OurCertificateSchema = new mongoose.Schema(
   {
-    certificateImage: { type: String, required: true }, // Cloudinary URL
-    description: { type: String, required: true },
+    certificateImage: { type: String }, // Cloudinary URL
+    description: { type: String, },
   },
   { timestamps: true }
 );
@@ -48,9 +48,9 @@ const OurCertificateSchema = new mongoose.Schema(
 
 const CommunitySchema = new mongoose.Schema(
   {
-    slack: { type: String, required: true },
-    discord: { type: String, required: true },
-    whatsapp: { type: String, required: true }
+    slack: { type: String, },
+    discord: { type: String, },
+    whatsapp: { type: String,}
   },
   { timestamps: true }
 );

@@ -4,6 +4,8 @@ const users= require('../controllers/registerUserController');
 const liveClassController = require("../controllers/liveClassController");
 const multer = require("multer");
 const fs = require("fs");
+const path = require("path");
+const stream = require("stream");
 
 
 
@@ -27,11 +29,25 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 
+
+// Ensure uploads folder exists
+const materialUploadPath = path.join(__dirname, "../uploads/materials");
+if (!fs.existsSync(materialUploadPath)) fs.mkdirSync(materialUploadPath, { recursive: true });
+
+
+
+
+
+
+
+
 router.post('/userregister',users.register);
 router.post('/userregisterbyadmin',users.adminCreateInvoice);
 router.post('/generateinvoice', users.generateInitialInvoice);
 router.get('/dashboard', users.getEducationDashboard);
 router.get('/getallinvoices', users.getAllInvoices);
+router.put('/updateinvoice/:id', users.updateInvoiceStatus);
+router.delete('/deleteinvoice/:id', users.deleteInvoiceById);
 router.get('/usercourse/:userId', users.getRegisteredCourseDetails);
 router.post('/userlogin', users.login);
 // Read
@@ -72,6 +88,23 @@ router.get('/allattendance', users.getAllAttendanceForAdmin);
 router.get('/dashboard/:mentorId', users.getMentorDashboard);
 router.post('/generate-otp', users.sendOtp); // Send OTP route
 router.post('/validate-otp', users.verifyOtp); // Verify OTP route
+router.get("/student-attendance/:enrollmentId", users.getStudentAttendanceDashboard);
+router.post("/acceptchatgrpreq", users.acceptGroupInvitation);
+router.get('/getchat/:chatGroupId/:userId', users.getChatMessages);
+router.get('/getnotifications/:userId', users.getNotificationsByUserId);
+router.get('/myquizz/:userId', users.getStudentQuizzes);
+router.post('/submit-quiz/:quizId/:userId', users.submitQuiz);
+router.get('/getmyquizperformance/:userId', users.getUserQuizPerformance);
+router.get('/myprofile/:userId', users.getUserProfile);
+router.get('/myattendance/:userId', users.getAttendanceByUserId);
+
+// Use 'material' as form-data key
+// Key in Postman or frontend: 'material'
+router.post(
+  "/upload-material/:mentorId/:liveClassId",
+  liveClassController.uploadMaterialForLiveClass
+);
+
 
 
 

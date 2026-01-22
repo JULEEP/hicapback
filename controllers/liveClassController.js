@@ -3,6 +3,11 @@ const LiveClass = require('../models/liveClass');
 const { Mentor } = require('../models/ourMentors');
 const {Course} = require('../models/coursesModel');
 const mongoose =require("mongoose");
+const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
+const dotenv = require("dotenv");
+
+dotenv.config();
 
 // CREATE LIVE CLASS
 exports.createLiveClass = async (req, res) => {
@@ -248,7 +253,6 @@ exports.getLiveClassesByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Validate userId format
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ 
         success: false, 
@@ -256,7 +260,6 @@ exports.getLiveClassesByUserId = async (req, res) => {
       });
     }
 
-    // Find all enrollments where this user is in enrolledUsers array
     const enrollments = await Enrollment.find({ enrolledUsers: userId }).select('_id');
     if (!enrollments || enrollments.length === 0) {
       return res.status(404).json({ 
@@ -267,23 +270,16 @@ exports.getLiveClassesByUserId = async (req, res) => {
 
     const enrollmentIds = enrollments.map(e => e._id);
 
-    // Fetch all live classes linked to these enrollments
     const liveClasses = await LiveClass.find({ enrollmentIdRef: { $in: enrollmentIds } })
       .populate({
         path: 'enrollmentIdRef',
         populate: [
-          {
-            path: 'courseId',
-            select: 'name description'
-          },
-          {
-            path: 'assignedMentors',  // populate mentors here
-            select: 'firstName lastName email expertise subjects'
-          }
+          { path: 'courseId', select: 'name description' },
+          { path: 'assignedMentors', select: 'firstName lastName email expertise subjects' }
         ]
       })
       .select('-__v')
-      .sort({ date: -1 });  // latest classes first
+      .sort({ date: -1 });
 
     if (!liveClasses || liveClasses.length === 0) {
       return res.status(404).json({ 
@@ -292,7 +288,6 @@ exports.getLiveClassesByUserId = async (req, res) => {
       });
     }
 
-    // Format response
     const responseData = liveClasses.map(cls => ({
       _id: cls._id,
       className: cls.className,
@@ -305,6 +300,7 @@ exports.getLiveClassesByUserId = async (req, res) => {
       date: cls.date,
       timing: cls.timing,
       link: cls.link,
+      materials: cls.materials || [],   // <-- Include materials here
       createdAt: cls.createdAt,
       updatedAt: cls.updatedAt
     }));
@@ -324,6 +320,7 @@ exports.getLiveClassesByUserId = async (req, res) => {
     });
   }
 };
+
 // GET LIVE CLASS BY ID
 exports.getLiveClassById = async (req, res) => {
   try {
@@ -685,5 +682,76 @@ exports.getLiveClassesByEnrollmentId = async (req, res) => {
       message: 'Server error', 
       error: error.message 
     });
+  }
+};
+
+
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+exports.uploadMaterialForLiveClass = async (req, res) => {
+  try {
+    const { mentorId, liveClassId } = req.params;
+
+    // Check if file is sent
+    if (!req.files || !req.files.material) {
+      return res.status(400).json({
+        success: false,
+        message: "File is required"
+      });
+    }
+
+    const file = req.files.material;
+
+    console.log("Uploading file:", file.name);
+
+    // Check if live class exists
+    const liveClass = await LiveClass.findOne({ _id: liveClassId, mentorId });
+    if (!liveClass) {
+      return res.status(404).json({
+        success: false,
+        message: "Live class not found for this mentor"
+      });
+    }
+
+    // Upload file to Cloudinary
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: `liveclass_materials/${mentorId}/${liveClassId}`,
+      resource_type: "auto" // supports PDF, DOC, PPT, images, etc.
+    });
+
+    console.log("Cloudinary upload result:", result.secure_url);
+
+    const materialData = {
+      fileName: file.name,
+      fileUrl: result.secure_url,
+      uploadedAt: new Date(),
+      fileSize: file.size,
+      fileType: file.mimetype
+    };
+
+    liveClass.materials = liveClass.materials || [];
+    liveClass.materials.push(materialData);
+    await liveClass.save();
+
+    // Delete temp file
+    fs.unlinkSync(file.tempFilePath);
+
+    res.status(201).json({
+      success: true,
+      message: "Material uploaded successfully to Cloudinary",
+      liveClassId,
+      uploadedFile: materialData,
+      totalMaterials: liveClass.materials.length
+    });
+
+  } catch (error) {
+    console.error("Error uploading to Cloudinary:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };

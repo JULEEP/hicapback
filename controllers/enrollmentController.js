@@ -105,30 +105,16 @@ exports.getEnrollmentById = async (req, res) => {
 // ✏️ Update enrollment
 exports.updateEnrolledByUserId = async (req, res) => {
   try {
-    const { enrollmentId } = req.params;
-    const { batchNumber, batchName, courseId, startDate, timings, duration, category } = req.body;
+    const { id } = req.params; // id from URL
+    const { batchNumber, batchName, startDate, timings, duration, category } = req.body; // ✅ courseId removed
 
-    if (!mongoose.Types.ObjectId.isValid(enrollmentId)) {
-      return res.status(400).json({ success: false, message: "Valid enrollmentId is required." });
-    }
 
-    if (courseId && !mongoose.Types.ObjectId.isValid(courseId)) {
-      return res.status(400).json({ success: false, message: "Valid courseId is required." });
-    }
-
-    // If courseId is provided, validate it exists
-    if (courseId) {
-      const course = await Course.findById(courseId);
-      if (!course) {
-        return res.status(404).json({ success: false, message: "Course not found" });
-      }
-    }
-
+    // Update enrollment
     const updatedEnrollment = await Enrollment.findByIdAndUpdate(
-      enrollmentId,
-      { batchNumber, batchName, courseId, startDate, timings, duration, category },
+      id,
+      { batchNumber, batchName, startDate, timings, duration, category }, // courseId removed
       { new: true }
-    ).populate("courseId");
+    );
 
     if (!updatedEnrollment) {
       return res.status(404).json({ success: false, message: "Enrollment not found" });
@@ -175,36 +161,40 @@ exports.createCertificate = async (req, res) => {
   try {
     const { enrolledId } = req.body;
 
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "Certificate file required" });
+    if (!req.files || !req.files.certificateFile) {
+      return res.status(400).json({
+        success: false,
+        message: "Certificate file required"
+      });
     }
 
-    // Upload directly to Cloudinary using stream upload
+    const file = req.files.certificateFile;
+
+    // Upload to Cloudinary using temp file path
     const certificateUrl = await uploadToCloudinary(
-      req.file.buffer,
-      "certificates",
-      req.file.originalname
+      file.tempFilePath,
+      "certificates"
     );
 
-    // Get enrollment and users (users come from enrolledUsers ref)
     const enrollment = await Enrollment.findById(enrolledId).populate("enrolledUsers");
     if (!enrollment) {
       return res.status(404).json({ success: false, message: "Enrollment not found" });
     }
-    if (!enrollment.enrolledUsers || !enrollment.enrolledUsers.length) {
+
+    if (!enrollment.enrolledUsers.length) {
       return res.status(400).json({ success: false, message: "No users enrolled" });
     }
 
     const createdCertificates = [];
+
     for (const user of enrollment.enrolledUsers) {
       const certificate = await Certificate.create({
         enrolledId,
         user: user._id,
         certificateFile: certificateUrl,
-        status: "Pending" // always default Pending
+        status: "Pending"
       });
 
-      // Push the certificate reference to the user
       user.certificates.push(certificate._id);
       await user.save();
 
@@ -216,10 +206,16 @@ exports.createCertificate = async (req, res) => {
       message: "Certificates created successfully",
       data: createdCertificates
     });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: "Server error", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
+
 // GET ALL CERTIFICATES with course name and user details
 exports.getAllCertificates = async (req, res) => {
   try {
@@ -357,21 +353,42 @@ exports.updateCertificateStatus = async (req, res) => {
 // DELETE CERTIFICATE
 exports.deleteCertificate = async (req, res) => {
   try {
-    const certificate = await Certificate.findById(req.params.id);
-    if (!certificate) return res.status(404).json({ success: false, message: 'Certificate not found' });
+    console.log("PARAM ID 👉", req.params.id);   // 🔥 IMPORTANT LOG
 
-    const user = await User.findById(certificate.user);
+    const certificate = await Certificate.findById(req.params.id);
+
+    console.log("CERTIFICATE 👉", certificate);
+
+    if (!certificate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Certificate not found'
+      });
+    }
+
+    const user = await UserRegister.findById(certificate.user);
     if (user) {
       user.certificates.pull(certificate._id);
       await user.save();
     }
 
     await certificate.deleteOne();
-    res.status(200).json({ success: true, message: 'Certificate deleted successfully' });
+
+    res.status(200).json({
+      success: true,
+      message: 'Certificate deleted successfully'
+    });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+    console.error("DELETE ERROR 👉", error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
   }
 };
+
 
 
 
@@ -442,6 +459,7 @@ exports.addEnrollmentToUser = async (req, res) => {
 
 
 // 👤 Get all enrollments for a user
+// 👤 Get all enrollments for a user
 exports.getEnrollmentsByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -460,13 +478,21 @@ exports.getEnrollmentsByUserId = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Format startDate in each enrolled course to a readable format (DD MMM YYYY)
-    const formattedCourses = user.enrolledCourses.map(course => {
-      return {
+    // Get mentor details for each course the user is enrolled in
+    const coursesWithMentors = await Promise.all(user.enrolledCourses.map(async (course) => {
+      const mentorDetails = await Mentor.find({
+        assignedCourses: course.courseId // Check if this courseId is in the mentor's assignedCourses
+      }).select('firstName lastName expertise email phoneNumber');
+
+      // Format startDate in each enrolled course to a readable format (DD MMM YYYY)
+      const formattedCourse = {
         ...course.toObject(),  // Convert Mongoose document to plain object
-        startDate: course.startDate ? format(new Date(course.startDate), 'dd MMM yyyy') : null  // Format the startDate
+        startDate: course.startDate ? format(new Date(course.startDate), 'dd MMM yyyy') : null,  // Format the startDate
+        mentors: mentorDetails  // Add mentor details
       };
-    });
+
+      return formattedCourse;
+    }));
 
     res.status(200).json({
       success: true,
@@ -476,14 +502,13 @@ exports.getEnrollmentsByUserId = async (req, res) => {
         email: user.email,
         phoneNumber: user.phoneNumber
       },
-      enrolledCourses: formattedCourses
+      enrolledCourses: coursesWithMentors
     });
   } catch (error) {
     console.error("Error fetching enrolled courses:", error);
     res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 };
-
 
 
 exports.addMentorToEnrollment = async (req, res) => {
@@ -779,31 +804,49 @@ exports.getMentorWithDetailedBatches = async (req, res) => {
 
 
 // Create Certificate
-exports.createCertificate = async (req, res) => {
-  try {
-    const { description } = req.body;
-    if (!req.file) return res.status(400).json({ success: false, message: "Image is required" });
+// exports.createCertificate = async (req, res) => {
+//   try {
+//     const { description } = req.body;
+//     if (!req.file) return res.status(400).json({ success: false, message: "Image is required" });
 
-    const imageUrl = await uploadToCloudinary(req.file.buffer, "certificates", req.file.originalname);
+//     const imageUrl = await uploadToCloudinary(req.file.buffer, "certificates", req.file.originalname);
 
-    const certificate = new OurCertificate({ certificateImage: imageUrl, description });
-    await certificate.save();
+//     const certificate = new OurCertificate({ certificateImage: imageUrl, description });
+//     await certificate.save();
 
-    res.status(201).json({ success: true, message: "Certificate created successfully", data: certificate });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
+//     res.status(201).json({ success: true, message: "Certificate created successfully", data: certificate });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
 
 // Get All Certificates
 exports.getAllCertificates = async (req, res) => {
   try {
-    const certificates = await OurCertificate.find().sort({ createdAt: -1 });
-    res.status(200).json({ success: true, data: certificates });
+    const certificates = await Certificate.find()
+      .populate({
+        path: "user",
+        select: "name email"
+      })
+      .populate({
+        path: "enrolledId",
+        select: "batchNumber batchName" // ✅ yahi chahiye tha
+      })
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: certificates
+    });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
+
 
 // Get Certificate by ID
 exports.getCertificateById = async (req, res) => {
@@ -839,16 +882,16 @@ exports.updateCertificate = async (req, res) => {
 };
 
 // Delete Certificate
-exports.deleteCertificate = async (req, res) => {
-  try {
-    const certificate = await OurCertificate.findByIdAndDelete(req.params.id);
-    if (!certificate) return res.status(404).json({ success: false, message: "Certificate not found" });
+// exports.deleteCertificate = async (req, res) => {
+//   try {
+//     const certificate = await OurCertificate.findByIdAndDelete(req.params.id);
+//     if (!certificate) return res.status(404).json({ success: false, message: "Certificate not found" });
 
-    res.status(200).json({ success: true, message: "Certificate deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
+//     res.status(200).json({ success: true, message: "Certificate deleted successfully" });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: error.message });
+//   }
+// };
 
 
 

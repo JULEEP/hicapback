@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
 
 const mentorSchema = new mongoose.Schema({
-  firstName: { type: String, required: true },
-  lastName: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  phoneNumber: { type: String, required: true, unique: true },
+  firstName: { type: String, },
+  lastName: { type: String, },
+  email: { type: String, unique: true },
+  phoneNumber: { type: String, unique: true },
   password: { type: String },
   expertise: { type: String }, // Add expertise area
   subjects: [String],
@@ -14,17 +14,17 @@ const mentorSchema = new mongoose.Schema({
 
 // OurMentor Schema
 const ourMentorSchema = new mongoose.Schema({
-  image: { type: String, required: true },
-  name: { type: String, required: true },
-  role: { type: String, required: true },
-  content: { type: String, required: true },
+  image: { type: String, },
+  name: { type: String, },
+  role: { type: String, },
+  content: { type: String, },
 }, { timestamps: true });
 
 // MentorExperience Schema
 const mentorExperienceSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  image: { type: String, required: true },
-  content: { type: String, required: true }
+  name: { type: String, },
+  image: { type: String, },
+  content: { type: String, }
 }, { timestamps: true });
 
 // Export both models

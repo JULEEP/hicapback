@@ -35,4 +35,28 @@ router.get("/profile/:id", mentorController.getMentorById);
 router.put("/Mentor/:id", upload.single("image"), mentorController.updateMentor);
 router.delete("/Mentor/:id", mentorController.deleteMentor);
 
+
+
+//quiz module
+
+// Create Quiz (mentorId in params)
+router.post("/createquiz/:mentorId", mentorController.createQuiz);
+
+// Get All Quizzes
+router.get("/allquizz", mentorController.getAllQuizzes);
+
+// Get all quizzes created by a mentor
+router.get("/mentorquizz/:mentorId", mentorController.getMentorQuizzes);
+
+// Update Quiz (mentorId in params for security)
+router.put("/updatequiz/:quizId/:mentorId", mentorController.updateQuiz);
+
+// Delete Quiz (mentorId in params)
+router.delete("/deletequiz/:quizId/:mentorId", mentorController.deleteQuiz);
+
+router.get("/mentor-submissions/:mentorId", mentorController.getMentorSubmittedQuizzes);
+
+router.get("/allsubmissionquizz", mentorController.getAllSubmittedQuizzes);
+router.delete("/deletequiz-attempt/:attemptId", mentorController.deleteSubmittedQuiz);
+
 module.exports = router;

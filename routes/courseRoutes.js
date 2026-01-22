@@ -9,8 +9,8 @@ const enrollmentController = require('../controllers/enrollmentController');
 router.post('/create-enrollment', enrollmentController.createEnrollment);
 router.get('/allenrollments', enrollmentController.getAllEnrollments);
 router.get("/enrollment/:id", enrollmentController.getEnrollmentById);
-router.put('/enrollments/:id', enrollmentController.updateEnrolledByUserId);
-router.delete('/enrollments/:id', enrollmentController.deleteEnrollmentById);
+router.put('/update-enrollment/:id', enrollmentController.updateEnrolledByUserId);
+router.delete('/delete-enrollment/:id', enrollmentController.deleteEnrollmentById);
 
 // User enrollment routes
 router.post('/enrollments/add-user', enrollmentController.addEnrollmentToUser);
@@ -32,7 +32,7 @@ router.get('/mentorbatches/:mentorId', enrollmentController.getMentorWithDetaile
 
 
 // Create certificates for all users in enrollment (single file applies to all)
-router.post('/certificate', upload.single('certificateFile'), enrollmentController.createCertificate);
+router.post('/certificate',  enrollmentController.createCertificate);
 
 // Get all certificates
 router.get('/certificates', enrollmentController.getAllCertificates);

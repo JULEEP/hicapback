@@ -24,6 +24,8 @@ const adminRoutes = require("./routes/AdminRoute"); // Fixed variable name
 // Import utils
 const cleanupLegacyIndexes = require('./utils/invoiceTemplate');
 
+const fileUpload = require("express-fileupload");
+
 // Initialize environment variables
 dotenv.config();
 
@@ -32,6 +34,14 @@ const server = http.createServer(app);
 const io = require('socket.io')(server, {
   cors: { origin: "*" }
 });
+
+
+app.use(fileUpload({
+  useTempFiles: true,           // ✅ important for Cloudinary upload
+  tempFileDir: "/tmp/",         // or any temp folder
+  createParentPath: true
+}));
+
 
 // Middleware
 app.use(cors());

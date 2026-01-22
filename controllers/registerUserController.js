@@ -16,13 +16,31 @@ const path = require("path");
 const fs = require("fs");
 const Invoice = require("../models/Invoicemodel") // ✅ CORRECT
 const PDFDocument = require('pdfkit');
-const {Enrollment} = require('../models/enrollment'); // ✅ Make sure path & model name are correct
-const { Certificate,OurCertificate,Community } = require('../models/enrollment');
+const { Enrollment } = require('../models/enrollment'); // ✅ Make sure path & model name are correct
+const { Certificate, OurCertificate, Community } = require('../models/enrollment');
 const { Mentor } = require("../models/ourMentors")
 const csv = require('csv-parser');
 const LiveClass = require('../models/liveClass');
 const Attendance = require("../models/Attendance")
-const VerifiedUser = require("../models/VerifiedUser")
+const VerifiedUser = require("../models/VerifiedUser");
+const ChatGroup = require('../models/ChatGroup');
+const Notification = require('../models/Notification');
+const Message = require('../models/Message');
+const Quiz = require('../models/Quiz');
+const QuizAttempt = require('../models/QuizAttempt');
+
+const cloudinary = require("cloudinary").v2;
+const dotenv = require("dotenv");
+const streamifier = require("streamifier");
+
+dotenv.config();
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
 
 
 
@@ -54,9 +72,10 @@ function generateRandomPassword() {
 }
 
 // Function to generate a custom user ID (HICAP + last 4 digits of the mobile number)
-function generateCustomUserId(mobile) {
-  const last4Digits = mobile.slice(-4);
-  return `HICAP${last4Digits}`;
+function generateCustomUserId() {
+  const randomNum = Math.floor(Math.random() * 10000); // Generate a random number between 0 and 9999
+  const paddedNum = randomNum.toString().padStart(4, '0'); // Ensure the number is 4 digits long
+  return `HICAP${paddedNum}`;
 }
 
 // Function to generate a unique Invoice ID
@@ -69,7 +88,6 @@ function generateInvoiceId() {
 //   key_id: 'rzp_test_BxtRNvflG06PTV',
 //   key_secret: 'RecEtdcenmR7Lm4AIEwo4KFr',
 // });
-
 
 //live keys
 const razorpayInstance = new razorpay({
@@ -109,10 +127,14 @@ exports.register = [
 
       const coursePrice = courseData.price;
 
-
-
-       // Fetch the user from VerifiedUser database to check phone verification status
-      const verifiedUser = await VerifiedUser.findOne({ mobile: mobile });
+      // Fetch the user from VerifiedUser database to check phone verification status
+      const verifiedUser = await VerifiedUser.findOne({
+        $or: [
+          { mobile: mobile }, // Format: "6301923007"
+          { mobile: `+91${mobile}` }, // Format: "+916301923007" 
+          { mobile: `91${mobile}` } // Format: "916301923007"
+        ]
+      });
 
       if (!verifiedUser) {
         return res.status(400).json({ success: false, message: "Your mobile number is not registered for verification. Please verify your phone number first." });
@@ -122,24 +144,22 @@ exports.register = [
         return res.status(400).json({ success: false, message: "Your phone number is not verified. Please complete the verification process to proceed with registration." });
       }
 
-      
       // Calculate GST (5%)
       const gstAmount = (coursePrice * 5) / 100;
-      
+
       let finalAdvancePayment;
       let totalPrice;
 
       // Calculate total price and advance payment WITH GST
-    if (isAdvancePayment) {
-  const advanceWithoutGst = 15000;
-  const gstOnAdvance = (advanceWithoutGst * 5) / 100;
-  finalAdvancePayment = advanceWithoutGst + gstOnAdvance;
-  totalPrice = coursePrice + gstAmount;
-} else {
-  totalPrice = coursePrice + gstAmount;
-  finalAdvancePayment = totalPrice; // ✅ Set paid amount as full
-}
-
+      if (isAdvancePayment) {
+        const advanceWithoutGst = (coursePrice * 60) / 100;
+        const gstOnAdvance = (advanceWithoutGst * 18) / 100;
+        finalAdvancePayment = advanceWithoutGst + gstOnAdvance;
+        totalPrice = coursePrice + gstAmount;
+      } else {
+        totalPrice = coursePrice + gstAmount;
+        finalAdvancePayment = totalPrice; // ✅ Set paid amount as full
+      }
 
       // Calculate remaining payment
       const remainingPayment = isAdvancePayment ? totalPrice - finalAdvancePayment : 0;
@@ -276,7 +296,7 @@ exports.register = [
       doc.text(`Rs.${coursePrice.toLocaleString()}/-`, 460, totalsY);
 
       doc.font("Helvetica");
-      doc.text(`GST (5%)`, 370, totalsY + 15);
+      doc.text(`GST (18%)`, 370, totalsY + 15);
       doc.text(`Rs.${gstAmount.toLocaleString()}/-`, 460, totalsY + 15);
 
       doc.font("Helvetica-Bold");
@@ -359,59 +379,104 @@ exports.register = [
             console.error("❌ Error saving invoice to database:", dbError.message);
           }
 
-          let emailSuccess = false,
+          let welcomeEmailSuccess = false,
+            paymentEmailSuccess = false,
             smsSuccess = false;
 
-          // ===== Email =====
+          // ===== EMAIL 1: Welcome Email (without invoice) =====
           if (email) {
             try {
-              const mailOptions = {
+              const welcomeMailOptions = {
                 from: `"Techsterker" <techsterker@gmail.com>`,
                 to: email,
-                subject: `Invoice ${invoiceId} - ${course}`,
+                subject: `Welcome to ${course} - Login Credentials`,
                 html: `
   <div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
-    <h2>Welcome to TECHSTERKER 🎉</h2>
+    <h2 style="color: #2c5aa0;">Welcome to TECHSTERKER 🎉</h2>
+    
     <p>Dear <strong>${name}</strong>,</p>
+    
+    <p>Greetings from <strong>TECHSTERKER</strong>!</p>
+    
+    <p>We are delighted to welcome you on board for the <strong>${course}</strong>. Get ready for an exciting and enriching learning experience with us.</p>
+    
+    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+      <h3 style="color: #2c5aa0; margin-top: 0;">📝 Your Login Credentials</h3>
+      <ul style="list-style-type: none; padding-left: 0;">
+        <li><strong>Student Name:</strong> ${name}</li>
+        <li><strong>User ID:</strong> ${customUserId}</li>
+        <li><strong>Password:</strong> ${generatedPassword}</li>
+        <li><strong>Platform:</strong> Online Classes</li>
+        <li><strong>Portal Link:</strong> <a href="https://www.techsterker.com/" target="_blank">www.techsterker.com</a></li>
+      </ul>
+    </div>
 
-    <p>Greetings from <strong>TECHSTERKER</strong>! We hope this message finds you and your family in good health and high spirits.</p>
-
-    <p>We are delighted to welcome <strong>${name}</strong> to TECHSTERKER – an institute dedicated to empowering the next generation of tech professionals through practical, career-focused training.</p>
-
-    <p>At TECHSTERKER, we believe that learning thrives when mentors and learners collaborate to build strong technical foundations, ignite curiosity, and develop the problem-solving skills essential for success in today's fast-paced digital world.</p>
-
-    <p>Your classes will be conducted by experienced industry mentors. The date of commencement will be shared shortly by your assigned instructor.</p>
-
-    <!-- Onboarding Details -->
-    <h3 style="margin-top: 20px;">📝 Student Onboarding Details</h3>
-    <ul>
-      <li><strong>Student Name:</strong> ${name}</li>
-      <li><strong>User ID:</strong> ${customUserId}</li>
-      <li><strong>Password:</strong> ${generatedPassword}</li>
-      <li><strong>Platform:</strong> Online Classes</li>
-    </ul>
     <p><strong>🔁 Note:</strong> If you face any issues logging into the platform, please refresh the login page once or twice. This usually resolves most access issues.</p>
 
-    <!-- Support Info -->
-    <h3 style="margin-top: 20px;">📞 Need Help?</h3>
-    <p>Our team is here to support you at every step.</p>
-    <ul>
-      <li>
-        <strong>Phone:</strong> +91 90002 39871 <br>
-        <span style="margin-left:65px; color:#666;">(Available: 9:00 AM – 7:00 PM IST)</span>
-      </li>
-      <li><strong>Email:</strong> techsterker@gmail.com</li>
-      <li>
-        <strong>Login Here:</strong> 
-        <a href="https://www.techsterker.com/" target="_blank">https://www.techsterker.com/</a>
-      </li>
-    </ul>
+    <div style="margin: 20px 0;">
+      <h3 style="color: #2c5aa0;">📋 Important Information</h3>
+      <p><strong>Kindly note:</strong> The sessions will be conducted on Microsoft Teams.</p>
+      <p>To ensure a smooth learning experience, please make sure of the following:</p>
+      <ul>
+        <li>A stable internet connection (minimum 50 Mbps speed)</li>
+        <li>Test your microphone and camera before joining the sessions</li>
+      </ul>
+    </div>
 
-    <p>We have also tagged our customer support team in this email to assist you with your orientation and initial setup. Please feel free to reach out for any help you may need — we're always happy to assist.</p>
+    <div style="background-color: #e8f4ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+      <h3 style="color: #2c5aa0; margin-top: 0;">📞 Need Help?</h3>
+      <p>For any queries or assistance, feel free to contact us:</p>
+      <ul>
+        <li><strong>Phone:</strong> +91 90002 39871 (Available: 10:00 AM – 7:00 PM IST)</li>
+        <li><strong>Email:</strong> info@techsterker.com</li>
+      </ul>
+    </div>
 
-    <p>We look forward to seeing you in class and wish you a successful learning experience!</p>
+    <p>We're excited to have you start this incredible journey with us. Wishing you an engaging and productive learning experience ahead!</p>
 
-    <p>Welcome aboard, and let the learning begin! 🚀</p>
+    <p style="margin-top: 30px;">
+      Warm regards,<br>
+      <strong>Team TECHSTERKER</strong>
+    </p>
+  </div>
+`
+              };
+
+              const welcomeInfo = await transporter.sendMail(welcomeMailOptions);
+              console.log("✅ Welcome email sent:", welcomeInfo.messageId);
+              welcomeEmailSuccess = true;
+            } catch (err) {
+              console.error("❌ Welcome email sending failed:", err.message);
+            }
+          }
+
+          // ===== EMAIL 2: Payment Confirmation Email (with invoice) =====
+          if (email) {
+            try {
+              const paymentMailOptions = {
+                from: `"Techsterker" <techsterker@gmail.com>`,
+                to: email,
+                subject: `Payment Confirmation - Invoice ${invoiceId}`,
+                html: `
+  <div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
+    <h2 style="color: #27ae60;">Payment Confirmation ✅</h2>
+    
+    <p>Dear <strong>${name}</strong>,</p>
+    
+    <p>We're delighted to confirm that your payment has been successfully received.</p>
+    
+    <p>Please find your payment invoice attached for your reference.</p>
+    
+    <p>We're excited to have you on board. Get ready to begin a transformative learning journey filled with knowledge, creativity, and real-world experience.</p>
+
+    <div style="background-color: #e8f4ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+      <h3 style="color: #2c5aa0; margin-top: 0;">📞 Contact Support</h3>
+      <p>If you have any questions or need assistance, please feel free to contact us:</p>
+      <ul>
+        <li><strong>Email:</strong> info@techsterker.com</li>
+        <li><strong>Phone:</strong> +91 90002 39871 (Available: 10:00 AM – 7:00 PM IST)</li>
+      </ul>
+    </div>
 
     <p style="margin-top: 30px;">
       Warm regards,<br>
@@ -428,31 +493,32 @@ exports.register = [
                 ],
               };
 
-              const info = await transporter.sendMail(mailOptions);
-              console.log("✅ Email sent:", info.messageId);
-              emailSuccess = true;
+              const paymentInfo = await transporter.sendMail(paymentMailOptions);
+              console.log("✅ Payment confirmation email sent:", paymentInfo.messageId);
+              paymentEmailSuccess = true;
             } catch (err) {
-              console.error("❌ Email sending failed:", err.message);
+              console.error("❌ Payment confirmation email sending failed:", err.message);
             }
           }
 
           // ===== SMS =====
-          if (mobile) {
-            try {
-              const smsMessage = `Hi ${name}, Invoice ${invoiceId} for ${course} (Course: Rs.${coursePrice}/-, GST: Rs.${gstAmount}/-, Total: Rs.${totalPrice}/-, Paid Amount: Rs.${finalAdvancePayment}/-, Due: Rs.${remainingPayment}/-) Download: ${fullPdfUrl}. User ID: ${customUserId}, Password: ${generatedPassword}`;
+        if (mobile) {
+  try {
+    const smsMessage = `Hi ${name}, thank you for enrolling in ${course} at Techsterker! We're excited to have you on board. Your login details - User ID: ${customUserId}, Password: ${generatedPassword}. Access your dashboard: www.techsterker.com`;
 
-              const smsResult = await client.messages.create({
-                body: smsMessage,
-                from: TWILIO_PHONE,
-                to: `+91${mobile}`,
-              });
+    const smsResult = await client.messages.create({
+      body: smsMessage,
+      from: TWILIO_PHONE,
+      to: `+91${mobile}`,
+    });
 
-              console.log("✅ SMS sent:", smsResult.sid);
-              smsSuccess = true;
-            } catch (err) {
-              console.error("❌ SMS sending failed:", err.message);
-            }
-          }
+    console.log("✅ SMS sent:", smsResult.sid);
+    smsSuccess = true;
+  } catch (err) {
+    console.error("❌ SMS sending failed:", err.message);
+  }
+}
+
 
           // Create Razorpay order
           const razorpayOrder = await razorpayInstance.orders.create({
@@ -477,7 +543,7 @@ exports.register = [
               coursePrice: coursePrice,
               gstAmount: gstAmount,
               totalPrice: totalPrice,
-              paidAmount: finalAdvancePayment, // Changed from advancePayment to paidAmount
+              paidAmount: finalAdvancePayment,
               remainingPayment: remainingPayment,
               orderId: newOrder._id,
               invoice: {
@@ -491,7 +557,8 @@ exports.register = [
                 status: "sent",
               },
               notifications: {
-                emailSent: emailSuccess,
+                welcomeEmailSent: welcomeEmailSuccess,
+                paymentEmailSent: paymentEmailSuccess,
                 smsSent: smsSuccess,
                 databaseSaved: !!savedInvoice
               },
@@ -545,19 +612,17 @@ exports.adminCreateInvoice = [
       }
 
       const coursePrice = courseData.price;
-      
-      // Calculate GST (5%)
-      const gstAmount = (coursePrice * 5) / 100;
+
+      // Calculate GST (18%)
+      const gstAmount = (coursePrice * 18) / 100;
       const totalPrice = coursePrice + gstAmount;
-      
+
       let finalAdvancePayment;
       let remainingPayment;
 
-      // Calculate advance payment with GST proportion
+      // ✅ FIX: Calculate advance payment as 60% of total price (including GST)
       if (isAdvancePayment) {
-        const advanceWithoutGst = 15000;
-        const gstOnAdvance = (advanceWithoutGst * 5) / 100;
-        finalAdvancePayment = advanceWithoutGst + gstOnAdvance;
+        finalAdvancePayment = (totalPrice * 60) / 100;
         remainingPayment = totalPrice - finalAdvancePayment;
       } else {
         finalAdvancePayment = totalPrice;
@@ -628,6 +693,7 @@ exports.adminCreateInvoice = [
 
       doc.fontSize(10).text(`Invoice no: ${invoiceId}`, 400, 115);
       doc.text(`Date: ${new Date().toLocaleDateString()}`, 400, 130);
+      doc.text(`Status: ${isAdvancePayment ? 'PARTIAL PAYMENT' : 'PAID'}`, 400, 145);
 
       const tableTop = 190;
       const itemHeight = 25;
@@ -663,11 +729,11 @@ exports.adminCreateInvoice = [
       doc.text(`Rs.${coursePrice.toLocaleString()}/-`, 460, totalsY);
 
       doc.font("Helvetica");
-      doc.text(`GST (5%)`, 370, totalsY + 15);
+      doc.text(`GST (18%)`, 370, totalsY + 15);
       doc.text(`Rs.${gstAmount.toLocaleString()}/-`, 460, totalsY + 15);
 
       doc.font("Helvetica-Bold");
-      doc.text(`Total`, 370, totalsY + 30);
+      doc.text(`Total Amount`, 370, totalsY + 30);
       doc.text(`Rs.${totalPrice.toLocaleString()}/-`, 460, totalsY + 30);
 
       doc.font("Helvetica-Bold");
@@ -700,68 +766,119 @@ exports.adminCreateInvoice = [
           total: totalPrice,
           advancePayment: finalAdvancePayment,
           remainingPayment,
-          status: "sent",
-          notes: "Thank you for choosing Techsterker!",
+          status: isAdvancePayment ? "sent" : "paid",
+          notes: isAdvancePayment ? "Advance payment received - Balance pending" : "Full payment received",
           pdfUrl,
           fullPdfUrl,
           companyInfo
         };
 
         let savedInvoice;
-        try { 
-          savedInvoice = await Invoice.create(invoiceData); 
-        } 
-        catch (dbError) { 
-          console.error("Invoice DB save failed:", dbError.message); 
+        try {
+          savedInvoice = await Invoice.create(invoiceData);
+        }
+        catch (dbError) {
+          console.error("Invoice DB save failed:", dbError.message);
         }
 
-        // Email
-        let emailSuccess = false;
+        let welcomeEmailSent = false;
+
+        // ===== ONLY 1 Email: Welcome Email =====
         if (email) {
           try {
-            await transporter.sendMail({
+            const welcomeMailOptions = {
               from: `"Techsterker" <techsterker@gmail.com>`,
               to: email,
-              subject: `Invoice ${invoiceId} - ${course}`,
-              html: `<p>Hi ${name},</p>
-<p>This is your invoice for the course <strong>${course}</strong>. Course Fee: Rs.${coursePrice.toLocaleString()}/-, GST: Rs.${gstAmount.toLocaleString()}/-, Total Amount: Rs.${totalPrice.toLocaleString()}/-, Paid: Rs.${finalAdvancePayment.toLocaleString()}/-, Balance Due: Rs.${remainingPayment.toLocaleString()}/-.</p>
-<p>You can download your invoice here: <a href="${fullPdfUrl}">${fullPdfUrl}</a></p>
-<p>Your login credentials: User ID: ${customUserId}, Password: ${generatedPassword}</p>`,
-              attachments: [{ filename: fileName, path: filePath }]
-            });
-            emailSuccess = true;
-          } catch (err) { 
-            console.error("Email failed:", err.message); 
+              subject: `Welcome to ${course} Course - Techsterker`,
+              html: `
+<div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
+  <h2>Welcome to TECHSTERKER! 🎉</h2>
+  <p>Dear <strong>${name}</strong>,</p>
+  
+  <p>Greetings from <strong>TECHSTERKER</strong>! We are delighted to welcome you on board for the <strong>${course}</strong> course. Get ready for an exciting and enriching learning experience with us.</p>
+  
+  <h3 style="margin-top: 20px;">📝 Your Login Credentials</h3>
+  <ul>
+    <li><strong>Student Name:</strong> ${name}</li>
+    <li><strong>User ID:</strong> ${customUserId}</li>
+    <li><strong>Password:</strong> ${generatedPassword}</li>
+    <li><strong>Date of Joining:</strong> ${new Date().toLocaleDateString()}</li>
+    <li><strong>Platform:</strong> Online Classes</li>
+    <li><strong>Portal Link:</strong> <a href="https://www.techsterker.com/">www.techsterker.com</a></li>
+  </ul>
+  
+  <p><strong>Kindly note:</strong> The sessions will be conducted on Microsoft Teams.</p>
+  
+  <h3 style="margin-top: 20px;">✅ To ensure a smooth learning experience, please make sure of the following:</h3>
+  <ul>
+    <li>A stable internet connection (minimum 50 Mbps speed).</li>
+    <li>Test your microphone and camera before joining the sessions.</li>
+  </ul>
+  
+  <h3 style="margin-top: 20px;">📞 Need Help?</h3>
+  <p>For any queries or assistance, feel free to contact us at:</p>
+  <ul>
+    <li><strong>Phone:</strong> +91 90002 39871 (Available: 10:00 AM – 7:00 PM IST)</li>
+    <li><strong>Email:</strong> info@techsterker.com</li>
+  </ul>
+  
+  <p>We're excited to have you start this incredible journey with us. Wishing you an engaging and productive learning experience ahead!</p>
+  
+  <p style="margin-top: 30px;">
+    Warm regards,<br>
+    <strong>Team TECHSTERKER</strong>
+  </p>
+</div>
+`
+            };
+
+            await transporter.sendMail(welcomeMailOptions);
+            console.log("✅ Welcome email sent");
+            welcomeEmailSent = true;
+          } catch (err) {
+            console.error("❌ Welcome email sending failed:", err.message);
           }
         }
 
-        // SMS
+        // ===== SMS Notification =====
         let smsSuccess = false;
         if (mobile) {
           try {
-            await client.messages.create({
-              body: `Hi ${name}, Invoice ${invoiceId} for ${course} (Course: Rs.${coursePrice}/-, GST: Rs.${gstAmount}/-, Total: Rs.${totalPrice}/-, Paid: Rs.${finalAdvancePayment}/-, Due: Rs.${remainingPayment}/-) Download: ${fullPdfUrl}. User ID: ${customUserId}, Password: ${generatedPassword}`,
+            const smsMessage =
+              `Hi ${name}, Welcome to Techsterker! Your enrollment for ${course} is confirmed. User ID: ${customUserId}, Password: ${generatedPassword}. Login: www.techsterker.com`;
+
+            const smsResult = await client.messages.create({
+              body: smsMessage,
               from: TWILIO_PHONE,
-              to: `+91${mobile}`
+              to: `+91${mobile}`,
             });
+
+            console.log("✅ SMS sent:", smsResult.sid);
             smsSuccess = true;
-          } catch (err) { 
-            console.error("SMS failed:", err.message); 
+          } catch (err) {
+            console.error("❌ SMS sending failed:", err.message);
           }
         }
 
-        // Razorpay order
-        const razorpayOrder = await razorpayInstance.orders.create({
-          amount: totalPrice * 100,
-          currency: "INR",
-          receipt: newUser._id.toString(),
-          payment_capture: 1,
-        });
+        // Razorpay order (only if payment is pending)
+        let razorpayOrder = null;
+        if (isAdvancePayment) {
+          try {
+            razorpayOrder = await razorpayInstance.orders.create({
+              amount: remainingPayment * 100,
+              currency: "INR",
+              receipt: newUser._id.toString(),
+              payment_capture: 1,
+            });
+          } catch (razorpayError) {
+            console.error("Razorpay order creation failed:", razorpayError.message);
+          }
+        }
 
         res.status(200).json({
           success: true,
-          message: "Invoice created by admin successfully",
-          razorpayOrderId: razorpayOrder.id,
+          message: `Invoice created by admin successfully. ${isAdvancePayment ? 'Advance payment received' : 'Full payment completed'}`,
+          razorpayOrderId: razorpayOrder?.id || null,
           data: {
             userId: newUser.userId,
             name: newUser.name,
@@ -774,6 +891,7 @@ exports.adminCreateInvoice = [
             totalPrice: totalPrice,
             advancePayment: finalAdvancePayment,
             remainingPayment: remainingPayment,
+            paymentStatus: isAdvancePayment ? 'Pending' : 'Completed',
             invoice: {
               invoiceId: savedInvoice?._id,
               invoiceNumber: invoiceId,
@@ -782,10 +900,10 @@ exports.adminCreateInvoice = [
               issueDate: invoiceData.issueDate,
               dueDate: invoiceData.dueDate,
               totalAmount: totalPrice,
-              status: "sent",
+              status: isAdvancePayment ? "sent" : "paid",
             },
             notifications: {
-              emailSent: emailSuccess,
+              emailSent: welcomeEmailSent,
               smsSent: smsSuccess,
               databaseSaved: !!savedInvoice
             }
@@ -804,36 +922,37 @@ exports.adminCreateInvoice = [
     }
   }
 ];
-
-
-
-// Controller for admin to generate initial invoice without any payment
+// Controller for admin to generate paid invoice directly
 exports.generateInitialInvoice = [
   upload.none(),
   async (req, res) => {
     try {
       const {
         name, mobile, email, courseId, course, degree, department, yearOfPassedOut,
-        company, role, experience, totalAmount, upiId, paymentMode
+        company, role, experience, totalAmount, upiId, paymentMode,
+        transactionId, paidAmount, paymentDate, paymentMethod
       } = req.body;
 
+      console.log('Received payload:', req.body);
+
       // Validation for required fields
-      if (!name || !mobile || !course || !totalAmount) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Name, mobile, course, and total amount are required fields' 
+      if (!name || !mobile || !course || !totalAmount || !paidAmount || !transactionId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Name, mobile, course, total amount, paid amount and transaction ID are required fields'
         });
       }
 
       const coursePrice = parseFloat(totalAmount);
-      
-      // Calculate GST (5%)
-      const gstAmount = (coursePrice * 5) / 100;
+      const paidAmt = parseFloat(paidAmount);
+
+      // Calculate GST (18%)
+      const gstAmount = (coursePrice * 18) / 100;
       const totalPrice = coursePrice + gstAmount;
-      
-      // User ne abhi kuch bhi pay nahi kiya hai - initial invoice hai
-      const paidAmount = 0;
-      const remainingPayment = totalPrice;
+
+      // ✅ FIX: Paid amount should be total price (with GST)
+      const paidAmountFinal = totalPrice; // Use totalPrice instead of paidAmt
+      const remainingPayment = 0; // No due amount
 
       // Generate a custom 4-digit password
       const generatedPassword = generateRandomPassword();
@@ -845,7 +964,10 @@ exports.generateInitialInvoice = [
       // Generate invoice ID
       const invoiceId = generateInvoiceId();
 
-      // Save user to database with Pending payment status
+      // Create payment date
+      const paymentDateObj = paymentDate ? new Date(paymentDate) : new Date();
+
+      // Save user to database with Paid payment status
       const newUser = await UserRegister.create({
         userId: customUserId,
         name,
@@ -862,22 +984,24 @@ exports.generateInitialInvoice = [
         password: hashedPassword,
         generatedPassword,
         totalPrice: totalPrice,
-        advancePayment: paidAmount, // 0 since no payment yet
-        remainingPayment: remainingPayment, // Total amount due
-        paymentStatus: 'Pending', // Initial status
+        advancePayment: paidAmountFinal, // Full amount paid (with GST)
+        remainingPayment: remainingPayment, // 0 since no due
+        paymentStatus: 'Paid', // Direct Paid status
         paymentMode: paymentMode || 'Manual',
       });
 
-      // Create order
+      // Create order with Paid status
       const newOrder = await Order.create({
-        transactionId: `INITIAL-${Date.now()}`,
+        transactionId: transactionId,
         userId: newUser._id,
         courseId,
         totalAmount: totalPrice,
-        advancePayment: paidAmount, // 0
-        remainingAmount: remainingPayment, // Full amount
-        paymentStatus: 'Pending',
+        advancePayment: paidAmountFinal, // Full amount (with GST)
+        remainingAmount: remainingPayment, // 0
+        paymentStatus: 'Paid',
         paymentMode: paymentMode || 'Manual',
+        paymentDate: paymentDateObj,
+        paymentMethod: paymentMethod || 'Manual'
       });
 
       // Update user with order ID
@@ -927,6 +1051,7 @@ exports.generateInitialInvoice = [
 
       doc.fontSize(10).text(`Invoice no: ${invoiceId}`, 400, 115);
       doc.text(`Date: ${new Date().toLocaleDateString()}`, 400, 130);
+      doc.text(`Status: PAID`, 400, 145);
 
       // ===== Table Header =====
       const tableTop = 190;
@@ -969,37 +1094,38 @@ exports.generateInitialInvoice = [
       doc.text(`Rs.${coursePrice.toLocaleString()}/-`, 460, totalsY);
 
       doc.font("Helvetica");
-      doc.text(`GST (5%)`, 370, totalsY + 15);
+      doc.text(`GST (18%)`, 370, totalsY + 15);
       doc.text(`Rs.${gstAmount.toLocaleString()}/-`, 460, totalsY + 15);
 
       doc.font("Helvetica-Bold");
-      doc.text(`Total Amount`, 370, totalsY + 30); // Changed to Total Amount
+      doc.text(`Total Amount`, 370, totalsY + 30);
       doc.text(`Rs.${totalPrice.toLocaleString()}/-`, 460, totalsY + 30);
 
-      // ===== Payment Instructions =====
-      doc.fontSize(10).font("Helvetica-Bold");
-      doc.text(`Payment Instructions:`, 50, totalsY + 60);
       doc.font("Helvetica");
-      doc.text(`Please pay the total amount of Rs.${totalPrice.toLocaleString()}/- using:`, 50, totalsY + 75);
-      
-      if (upiId) {
-        doc.text(`UPI ID: ${upiId}`, 50, totalsY + 90);
-      }
-      
-      if (paymentMode) {
-        doc.text(`Payment Mode: ${paymentMode}`, 50, totalsY + (upiId ? 105 : 90));
-      }
+      doc.text(`Paid Amount`, 370, totalsY + 45);
+      doc.text(`Rs.${paidAmountFinal.toLocaleString()}/-`, 460, totalsY + 45); // ✅ Now this will show total amount
 
-      doc.text(`Due Date: ${new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}`, 50, totalsY + (upiId ? 120 : 105));
+      doc.font("Helvetica-Bold");
+      doc.text(`Due Amount`, 370, totalsY + 60);
+      doc.text(`Rs.${remainingPayment.toLocaleString()}/-`, 460, totalsY + 60);
 
-      // ===== Footer (Thank You) =====
+      // ===== Payment Details =====
+      doc.fontSize(10).font("Helvetica-Bold");
+      doc.text(`Payment Details:`, 50, totalsY + 90);
+      doc.font("Helvetica");
+      doc.text(`Transaction ID: ${transactionId}`, 50, totalsY + 105);
+      doc.text(`Payment Date: ${paymentDateObj.toLocaleDateString()}`, 50, totalsY + 120);
+      doc.text(`Payment Method: ${paymentMethod || 'Manual'}`, 50, totalsY + 135);
+      doc.text(`Payment Status: PAID`, 50, totalsY + 150);
+
+      // ===== Footer =====
       doc
         .fontSize(9)
         .fillColor("#666")
         .text(
-          "Thank you for choosing Techsterker! This is a computer-generated invoice.",
+          "Thank you for your payment! This is a computer-generated invoice.",
           50,
-          totalsY + 150,
+          totalsY + 180,
           { width: 500, align: "start" }
         );
 
@@ -1016,17 +1142,13 @@ exports.generateInitialInvoice = [
           const pdfUrl = `/uploads/invoices/${fileName}`;
           const fullPdfUrl = `${req.protocol}://${req.get('host')}${pdfUrl}`;
 
-          // Calculate due date (30 days from now)
-          const dueDate = new Date();
-          dueDate.setDate(dueDate.getDate() + 30);
-
           // ===== Save Invoice to Database =====
           const invoiceData = {
             invoiceNumber: invoiceId,
             studentId: newUser._id,
             paymentId: newOrder._id,
             issueDate: new Date(),
-            dueDate: dueDate,
+            dueDate: new Date(), // Same as issue date since no due
             items: items.map(item => ({
               description: item.description,
               quantity: item.quantity,
@@ -1036,10 +1158,10 @@ exports.generateInitialInvoice = [
             subtotal: coursePrice,
             gst: gstAmount,
             total: totalPrice,
-            advancePayment: paidAmount, // 0
-            remainingPayment: remainingPayment, // Full amount
-            status: "sent",
-            notes: "Initial invoice - Payment pending",
+            advancePayment: paidAmountFinal, // Full amount (with GST)
+            remainingPayment: remainingPayment, // 0
+            status: "paid", // Direct paid
+            notes: "Payment completed - Invoice generated",
             pdfUrl: pdfUrl,
             fullPdfUrl: fullPdfUrl,
             companyInfo: {
@@ -1047,11 +1169,11 @@ exports.generateInitialInvoice = [
               contact: companyInfo.contact,
               email: companyInfo.email
             },
-            paymentInstructions: {
-              upiId: upiId || "Not provided",
-              paymentMode: paymentMode || 'Manual Transfer',
-              dueAmount: remainingPayment,
-              dueDate: dueDate
+            paymentDetails: {
+              transactionId: transactionId,
+              paymentDate: paymentDateObj,
+              paymentMethod: paymentMethod || 'Manual',
+              status: 'paid'
             }
           };
 
@@ -1065,68 +1187,103 @@ exports.generateInitialInvoice = [
             console.error("❌ Error saving invoice to database:", dbError.message);
           }
 
-          let emailSuccess = false,
-            smsSuccess = false;
+          let welcomeEmailSent = false;
+          let paymentEmailSent = false;
 
-          // ===== Email =====
+          // ===== Email 1: Welcome Email =====
           if (email) {
             try {
-              const mailOptions = {
+              const welcomeMailOptions = {
                 from: `"Techsterker" <techsterker@gmail.com>`,
                 to: email,
-                subject: `Invoice ${invoiceId} - ${course} - Payment Required`,
+                subject: `Welcome to ${course} Course - Techsterker`,
                 html: `
-  <div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
-    <h2>Welcome to TECHSTERKER 🎉</h2>
-    <p>Dear <strong>${name}</strong>,</p>
+<div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
+  <h2>Welcome to TECHSTERKER! 🎉</h2>
+  <p>Dear <strong>${name}</strong>,</p>
+  
+  <p>Greetings from <strong>TECHSTERKER</strong>! We are delighted to welcome you on board for the <strong>${course}</strong> course. Get ready for an exciting and enriching learning experience with us.</p>
+  
+  <h3 style="margin-top: 20px;">📝 Your Login Credentials</h3>
+  <ul>
+    <li><strong>Student Name:</strong> ${name}</li>
+    <li><strong>User ID:</strong> ${customUserId}</li>
+    <li><strong>Password:</strong> ${generatedPassword}</li>
+    <li><strong>Date of Joining:</strong> ${new Date().toLocaleDateString()}</li>
+    <li><strong>Platform:</strong> Online Classes</li>
+    <li><strong>Portal Link:</strong> <a href="https://www.techsterker.com/">www.techsterker.com</a></li>
+  </ul>
+  
+  <p><strong>Kindly note:</strong> The sessions will be conducted on Microsoft Teams.</p>
+  
+  <h3 style="margin-top: 20px;">✅ To ensure a smooth learning experience, please make sure of the following:</h3>
+  <ul>
+    <li>A stable internet connection (minimum 50 Mbps speed).</li>
+    <li>Test your microphone and camera before joining the sessions.</li>
+  </ul>
+  
+  <h3 style="margin-top: 20px;">📞 Need Help?</h3>
+  <p>For any queries or assistance, feel free to contact us at:</p>
+  <ul>
+    <li><strong>Phone:</strong> +91 90002 39871 (Available: 10:00 AM – 7:00 PM IST)</li>
+    <li><strong>Email:</strong> info@techsterker.com</li>
+  </ul>
+  
+  <p>We're excited to have you start this incredible journey with us. Wishing you an engaging and productive learning experience ahead!</p>
+  
+  <p style="margin-top: 30px;">
+    Warm regards,<br>
+    <strong>Team TECHSTERKER</strong>
+  </p>
+</div>
+`
+              };
 
-    <p>Greetings from <strong>TECHSTERKER</strong>! We are pleased to onboard you for the <strong>${course}</strong> course.</p>
+              await transporter.sendMail(welcomeMailOptions);
+              console.log("✅ Welcome email sent");
+              welcomeEmailSent = true;
+            } catch (err) {
+              console.error("❌ Welcome email sending failed:", err.message);
+            }
+          }
 
-    <!-- Onboarding Details -->
-    <h3 style="margin-top: 20px;">📝 Student Onboarding Details</h3>
-    <ul>
-      <li><strong>Student Name:</strong> ${name}</li>
-      <li><strong>User ID:</strong> ${customUserId}</li>
-      <li><strong>Password:</strong> ${generatedPassword}</li>
-      <li><strong>Platform:</strong> Online Classes</li>
-    </ul>
+          // ===== Email 2: Payment Confirmation Email =====
+          if (email) {
+            try {
+              const paymentMailOptions = {
+                from: `"Techsterker" <techsterker@gmail.com>`,
+                to: email,
+                subject: `Payment Confirmation - ${course} Course`,
+                html: `
+<div style="font-family: Arial, sans-serif; line-height: 1.6; color:#333;">
+  <h2>Payment Confirmed Successfully! ✅</h2>
+  <p>Dear <strong>${name}</strong>,</p>
+  
+  <p>We're delighted to confirm that your payment has been successfully received.</p>
+  
+ <!--
+<h3 style="margin-top: 20px;">💰 Payment Details</h3>
+<ul>
+  <li><strong>Course:</strong> ${course}</li>
+  <li><strong>Amount Paid:</strong> Rs.${paidAmountFinal.toLocaleString()}/-</li>
+  <li><strong>Payment Date:</strong> ${paymentDateObj.toLocaleDateString()}</li>
+  <li><strong>Transaction ID:</strong> ${transactionId}</li>
+  <li><strong>Payment Status:</strong> <span style="color: green; font-weight: bold;">COMPLETED</span></li>
+</ul>
+-->
 
-    <!-- Payment Instructions -->
-    <h3 style="margin-top: 20px;">💳 Payment Instructions</h3>
-    <p>Please complete the payment of <strong>Rs.${totalPrice.toLocaleString()}/-</strong> to activate your course.</p>
-    ${upiId ? `
-    <ul>
-      <li><strong>UPI ID:</strong> ${upiId}</li>
-      <li><strong>Payment Mode:</strong> ${paymentMode || 'UPI Transfer'}</li>
-    </ul>
-    ` : '<p>Please contact admin for payment details.</p>'}
-    
-    <p><strong>Note:</strong> Your course access will be activated after payment confirmation.</p>
-
-    <p><strong>🔁 Note:</strong> If you face any issues logging into the platform, please refresh the login page once or twice.</p>
-
-    <!-- Support Info -->
-    <h3 style="margin-top: 20px;">📞 Need Help?</h3>
-    <p>Our team is here to support you at every step.</p>
-    <ul>
-      <li>
-        <strong>Phone:</strong> +91 90002 39871 <br>
-        <span style="margin-left:65px; color:#666;">(Available: 9:00 AM – 7:00 PM IST)</span>
-      </li>
-      <li><strong>Email:</strong> techsterker@gmail.com</li>
-      <li>
-        <strong>Login Here:</strong> 
-        <a href="https://www.techsterker.com/" target="_blank">https://www.techsterker.com/</a>
-      </li>
-    </ul>
-
-    <p>We look forward to seeing you in class!</p>
-
-    <p style="margin-top: 30px;">
-      Warm regards,<br>
-      <strong>Team TECHSTERKER</strong>
-    </p>
-  </div>
+  
+  <p>Please find your payment invoice attached for your reference.</p>
+  
+  <p>We're excited to have you on board. Get ready to begin a transformative learning journey filled with knowledge, creativity, and real-world experience.</p>
+  
+  <p>If you have any questions or need assistance, please feel free to contact us at info@techsterker.com or call us at +91 90002 39871 (Available: 10:00 AM – 7:00 PM IST).</p>
+  
+  <p style="margin-top: 30px;">
+    Warm regards,<br>
+    <strong>Team TECHSTERKER</strong>
+  </p>
+</div>
 `,
                 attachments: [
                   {
@@ -1137,67 +1294,62 @@ exports.generateInitialInvoice = [
                 ],
               };
 
-              const info = await transporter.sendMail(mailOptions);
-              console.log("✅ Email sent:", info.messageId);
-              emailSuccess = true;
+              await transporter.sendMail(paymentMailOptions);
+              console.log("✅ Payment confirmation email sent");
+              paymentEmailSent = true;
             } catch (err) {
-              console.error("❌ Email sending failed:", err.message);
+              console.error("❌ Payment confirmation email sending failed:", err.message);
             }
           }
 
-          // ===== SMS =====
-          if (mobile) {
-            try {
-              let smsMessage = `Hi ${name}, Invoice ${invoiceId} for ${course}. Total Amount: Rs.${totalPrice}/- (Due: Rs.${remainingPayment}/-). Download: ${fullPdfUrl}. User ID: ${customUserId}, Password: ${generatedPassword}`;
-              
-              if (upiId) {
-                smsMessage += ` Pay via UPI: ${upiId}`;
-              }
+         // ===== SMS Notification =====
+let smsSuccess = false;
 
-              const smsResult = await client.messages.create({
-                body: smsMessage,
-                from: TWILIO_PHONE,
-                to: `+91${mobile}`,
-              });
+if (mobile) {
+  try {
+    const smsMessage = `Hi ${name}, welcome to Techsterker! Your enrollment for ${course} is confirmed. User ID: ${customUserId}, Password: ${generatedPassword}. Login: www.techsterker.com`;
 
-              console.log("✅ SMS sent:", smsResult.sid);
-              smsSuccess = true;
-            } catch (err) {
-              console.error("❌ SMS sending failed:", err.message);
-            }
-          }
+    const smsResult = await client.messages.create({
+      body: smsMessage,
+      from: TWILIO_PHONE,
+      to: `+91${mobile}`,
+    });
+
+    console.log("✅ SMS sent:", smsResult.sid);
+    smsSuccess = true;
+  } catch (err) {
+    console.error("❌ SMS sending failed:", err.message);
+  }
+}
 
           // Send response
           res.status(200).json({
             success: true,
-            message: "Initial invoice generated successfully. User needs to make payment.",
+            message: "Invoice generated successfully with paid status. Welcome and payment confirmation emails sent.",
             data: {
               userId: newUser.userId,
               name: newUser.name,
               email: newUser.email,
               mobile: newUser.mobile,
               course: newUser.course,
-              totalAmountDue: totalPrice,
-              paymentStatus: 'Pending',
+              totalAmount: totalPrice,
+              paidAmount: paidAmountFinal,
+              dueAmount: remainingPayment,
+              paymentStatus: 'Paid',
               orderId: newOrder._id,
+              transactionId: transactionId,
               invoice: {
                 invoiceId: savedInvoice?._id,
                 invoiceNumber: invoiceId,
                 pdfUrl: pdfUrl,
                 fullPdfUrl: fullPdfUrl,
                 issueDate: invoiceData.issueDate,
-                dueDate: invoiceData.dueDate,
                 totalAmount: totalPrice,
-                status: "sent",
-              },
-              paymentInstructions: {
-                upiId: upiId || "Contact admin",
-                paymentMode: paymentMode || 'Manual Transfer',
-                dueAmount: remainingPayment,
-                dueDate: dueDate
+                status: "paid",
               },
               notifications: {
-                emailSent: emailSuccess,
+                welcomeEmailSent: welcomeEmailSent,
+                paymentEmailSent: paymentEmailSent,
                 smsSent: smsSuccess,
                 databaseSaved: !!savedInvoice
               },
@@ -1208,7 +1360,7 @@ exports.generateInitialInvoice = [
           console.error("❌ Post-PDF process error:", err.message);
           res.status(500).json({
             success: false,
-            message: "An error occurred while sending the invoice.",
+            message: "An error occurred while processing the invoice.",
           });
         }
       });
@@ -1222,16 +1374,14 @@ exports.generateInitialInvoice = [
       });
 
     } catch (err) {
-      console.error("❌ Error in initial invoice generation:", err.message);
+      console.error("❌ Error in invoice generation:", err.message);
       res.status(500).json({
         success: false,
-        message: "An error occurred during initial invoice generation.",
+        message: "An error occurred during invoice generation.",
       });
     }
   },
 ];
-
-
 
 
 exports.getAllInvoices = async (req, res) => {
@@ -1264,12 +1414,12 @@ exports.getAllInvoices = async (req, res) => {
           invoiceNumber: inv.invoiceNumber,
           student: studentData
             ? {
-                userId: studentData.userId,
-                name: studentData.name,
-                email: studentData.email,
-                mobile: studentData.mobile,
-                course: studentData.course,
-              }
+              userId: studentData.userId,
+              name: studentData.name,
+              email: studentData.email,
+              mobile: studentData.mobile,
+              course: studentData.course,
+            }
             : null,
           paymentId: inv.paymentId || null,
           issueDate: inv.issueDate,
@@ -1301,6 +1451,79 @@ exports.getAllInvoices = async (req, res) => {
     });
   }
 };
+
+
+// Update only the status of an invoice
+exports.updateInvoiceStatus = async (req, res) => {
+  try {
+    const { id } = req.params; // Invoice ID
+    const { status } = req.body; // New status
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Invoice ID is required" });
+    }
+
+    if (!status) {
+      return res.status(400).json({ success: false, message: "Status is required" });
+    }
+
+    // Update only the status field
+    const updatedInvoice = await Invoice.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true }
+    );
+
+    if (!updatedInvoice) {
+      return res.status(404).json({ success: false, message: "Invoice not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Invoice status updated successfully",
+      data: {
+        invoiceId: updatedInvoice._id,
+        status: updatedInvoice.status,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error updating invoice status:", err.message);
+    res.status(500).json({
+      success: false,
+      message: "An error occurred while updating the invoice status",
+    });
+  }
+};
+
+
+// Delete an invoice by ID
+exports.deleteInvoiceById = async (req, res) => {
+  try {
+    const { id } = req.params; // Invoice ID from params
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Invoice ID is required" });
+    }
+
+    const deletedInvoice = await Invoice.findByIdAndDelete(id);
+
+    if (!deletedInvoice) {
+      return res.status(404).json({ success: false, message: "Invoice not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Invoice deleted successfully",
+    });
+  } catch (err) {
+    console.error("❌ Error deleting invoice:", err.message);
+    res.status(500).json({
+      success: false,
+      message: "An error occurred while deleting the invoice",
+    });
+  }
+};
+
 
 exports.getAllPayments = async (req, res) => {
   try {
@@ -1415,7 +1638,12 @@ exports.login = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Compare the entered password with the generatedPassword (no hashing involved in this case)
+    // Log the user data and the password values for debugging
+    console.log("User found:", user);
+    console.log("Password entered:", generatedPassword);
+    console.log("Stored password:", user.generatedPassword);
+
+    // Directly check if the generatedPassword matches the stored one (no hashing)
     if (generatedPassword !== user.generatedPassword) {
       return res.status(401).json({ success: false, message: 'Incorrect password' });
     }
@@ -1439,6 +1667,7 @@ exports.login = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
+
 
 
 
@@ -1483,21 +1712,74 @@ exports.getUserById = async (req, res) => {
 // UPDATE USER
 exports.updateUser = async (req, res) => {
   try {
-    const { firstName, lastName, email, phoneNumber } = req.body;
+    const userId = req.params.id;
 
-    const user = await UserRegister.findByIdAndUpdate(
-      req.params.id,
-      { firstName, lastName, email, phoneNumber },
+    const user = await UserRegister.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    console.log("REQ BODY:", req.body);
+    console.log("REQ FILES:", req.files);
+
+    const updateData = {};
+
+    // ✅ SAFE BODY HANDLING (NO CRASH)
+    if (req.body && typeof req.body === "object") {
+      for (const key in req.body) {
+        if (req.body[key] !== undefined && req.body[key] !== "") {
+          updateData[key] = req.body[key];
+        }
+      }
+    }
+
+    // 🖼️ IMAGE UPDATE (express-fileupload)
+    if (req.files && req.files.profileImage) {
+      const file = req.files.profileImage;
+
+      const uploadResult = await cloudinary.uploader.upload(
+        file.tempFilePath,
+        {
+          folder: "users/profile",
+        }
+      );
+
+      updateData.profileImage = uploadResult.secure_url;
+    }
+
+    // ❌ Nothing to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No data provided to update",
+      });
+    }
+
+    const updatedUser = await UserRegister.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
       { new: true }
-    ).select('-password');
+    ).select("-password");
 
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-
-    res.status(200).json({ success: true, message: 'User updated successfully', data: user });
+    res.status(200).json({
+      success: true,
+      message: "User updated successfully",
+      data: updatedUser,
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+    console.error("Update user error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
+
 
 // DELETE USER
 exports.deleteUser = async (req, res) => {
@@ -1585,7 +1867,6 @@ exports.getRecommendedCourses = async (req, res) => {
 
 
 
-// Get Education Dashboard Data
 exports.getEducationDashboard = async (req, res) => {
   try {
     // Dates
@@ -1594,10 +1875,11 @@ exports.getEducationDashboard = async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Parallel queries (fast execution)
+    // Parallel queries
     const [
       totalStudents,
       totalMentors,
+      totalCourses,         // ✅ added total courses count
       todaysEnrollments,
       completedCoursesToday,
       revenueToday,
@@ -1609,24 +1891,16 @@ exports.getEducationDashboard = async (req, res) => {
       studentInsightsData,
       mentorInsightsData
     ] = await Promise.all([
-      // Total Students
       UserRegister.countDocuments(),
-
-      // Total Mentors
       Mentor.countDocuments(),
-
-      // Today's Enrollments
+      Course.countDocuments(), // ✅ total courses
       UserRegister.countDocuments({
         createdAt: { $gte: today, $lt: tomorrow }
       }),
-
-      // Today's Completed Certificates
       Certificate.countDocuments({
         createdAt: { $gte: today, $lt: tomorrow },
         status: "Approved"
       }),
-
-      // Today's Revenue
       Order.aggregate([
         {
           $match: {
@@ -1636,8 +1910,6 @@ exports.getEducationDashboard = async (req, res) => {
         },
         { $group: { _id: null, total: { $sum: "$amount" } } }
       ]),
-
-      // Active Students
       UserRegister.countDocuments({
         lastLogin: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       }),
@@ -1647,8 +1919,6 @@ exports.getEducationDashboard = async (req, res) => {
       UserRegister.countDocuments({
         lastLogin: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
       }),
-
-      // Earnings Data (chart)
       Order.aggregate([
         {
           $group: {
@@ -1658,8 +1928,6 @@ exports.getEducationDashboard = async (req, res) => {
         },
         { $sort: { _id: 1 } }
       ]),
-
-      // Enrollment Data (chart)
       Enrollment.aggregate([
         {
           $group: {
@@ -1669,11 +1937,7 @@ exports.getEducationDashboard = async (req, res) => {
         },
         { $sort: { _id: 1 } }
       ]),
-
-      // Student Insights Table
       UserRegister.find().select("name email mobile createdAt"),
-
-      // Mentor Insights Table
       Mentor.find().select("name expertise createdAt")
     ]);
 
@@ -1682,6 +1946,7 @@ exports.getEducationDashboard = async (req, res) => {
       totals: {
         students: totalStudents,
         mentors: totalMentors,
+        courses: totalCourses,  // ✅ added here
         categories: 12 // agar Categories model hai toh yaha count karna
       },
       todayStats: {
@@ -1716,7 +1981,6 @@ exports.getEducationDashboard = async (req, res) => {
 };
 
 
-
 exports.uploadBulkAttendanceCSV = async (req, res) => {
   const { mentorId } = req.params;
 
@@ -1745,10 +2009,10 @@ exports.uploadBulkAttendanceCSV = async (req, res) => {
           timing: row["Timing"]?.trim(),
           studentName: row["Student Name"]?.trim(),
           enrollmentId: row["Enrollment ID"]?.trim(),
+          userId: row["User ID"]?.trim() || "", // ✅ just string
           status: row["Status"]?.trim().toLowerCase(),
         }));
 
-        // Create one Attendance document with all entries in attendance array
         const newAttendance = new Attendance({
           mentorId,
           attendance: attendanceEntries,
@@ -1774,6 +2038,7 @@ exports.uploadBulkAttendanceCSV = async (req, res) => {
       return res.status(500).json({ success: false, message: "Error reading CSV file." });
     });
 };
+
 
 
 
@@ -1950,7 +2215,7 @@ exports.sendOtp = async (req, res) => {
 
     if (!formattedMobile.startsWith('+')) {
       // Prepend +91 if the number does not already start with it
-      formattedMobile = `+91${mobile}`; 
+      formattedMobile = `+91${mobile}`;
     }
 
     // Validate phone number format (example for India, can be adjusted for other countries)
@@ -2062,6 +2327,531 @@ exports.getAllAttendanceForAdmin = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Server error while fetching attendance records for admin.",
+    });
+  }
+};
+
+
+
+exports.getStudentAttendanceDashboard = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+
+    if (!enrollmentId) {
+      return res.status(400).json({ success: false, message: "Enrollment ID is required" });
+    }
+
+    // Fetch attendance records where any subdocument in the array matches the enrollmentId
+    const attendanceRecords = await Attendance.find({
+      "attendance.enrollmentId": enrollmentId
+    });
+
+    // Flatten and filter only relevant attendance records
+    const studentAttendance = [];
+
+    attendanceRecords.forEach(record => {
+      const matchingEntries = record.attendance.filter(entry => entry.enrollmentId === enrollmentId);
+      studentAttendance.push(...matchingEntries);
+    });
+
+    res.status(200).json({
+      success: true,
+      totalClasses: studentAttendance.length,
+      presentCount: studentAttendance.filter(entry => entry.status.toLowerCase() === "present").length,
+      absentCount: studentAttendance.filter(entry => entry.status.toLowerCase() === "absent").length,
+      records: studentAttendance
+    });
+
+  } catch (error) {
+    console.error("Error fetching student attendance:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+
+
+// Controller to accept group invitation
+exports.acceptGroupInvitation = async (req, res) => {
+  try {
+    const { userId, groupId } = req.body;
+
+    // Step 1: Find the chat group
+    const chatGroup = await ChatGroup.findById(groupId);
+
+    // Step 2: Check if the user is part of the group
+    if (!chatGroup.enrolledUsers.includes(userId)) {
+      return res.status(400).json({ ok: false, message: 'User is not enrolled in this group.' });
+    }
+
+    // Step 3: Update user status to "Accepted" in the group
+    chatGroup.status = 'Accepted'; // Change the group status to accepted
+    await chatGroup.save();
+
+    // Step 4: Mark the notification as read
+    await Notification.updateMany({ userId, relatedGroupId: groupId }, { $set: { isRead: true } });
+
+    // Step 5: Respond with success
+    res.status(200).json({ ok: true, message: 'Group accepted successfully.' });
+  } catch (err) {
+    console.error('Error accepting group invitation:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+};
+
+
+
+exports.getChatMessages = async (req, res) => {
+  try {
+    const { chatGroupId, userId } = req.params; // GET /chat/:chatGroupId/:userId
+
+    // Step 1: Get the chat group
+    const chatGroup = await ChatGroup.findById(chatGroupId);
+
+    if (!chatGroup) {
+      return res.status(404).json({ ok: false, message: 'Chat group not found.' });
+    }
+
+    // Step 2: Check if the user is enrolled
+    const isEnrolled = chatGroup.enrolledUsers.some(
+      user => user.toString() === userId
+    );
+
+    if (!isEnrolled) {
+      return res.status(403).json({ ok: false, message: 'You are not a member of this chat group.' });
+    }
+
+    // Step 3: Fetch all messages for this group
+    const messages = await Message.find({ chatGroupId }).sort({ createdAt: 1 }); // oldest first
+
+    res.status(200).json({
+      ok: true,
+      chatGroup: {
+        _id: chatGroup._id,
+        groupName: chatGroup.groupName,
+      },
+      messages,
+    });
+  } catch (err) {
+    console.error('Error fetching chat messages:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+};
+
+
+// Get notifications for a specific user
+exports.getNotificationsByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params; // User ID from URL parameter
+
+    // Fetch notifications for this user
+    const notifications = await Notification.find({ userId })
+      .populate('relatedGroupId', 'groupName') // Optional: populate group name
+      .sort({ createdAt: -1 }); // Most recent notifications first
+
+    res.status(200).json({ ok: true, notifications });
+  } catch (err) {
+    console.error('Error fetching notifications:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+};
+
+
+
+exports.getStudentQuizzes = async (req, res) => {
+  try {
+    const { userId } = req.params; // MongoDB _id
+
+    const user = await UserRegister.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // ✅ enrolledCourses array
+    const enrolledCourses = user.enrolledCourses;
+
+    if (!enrolledCourses || enrolledCourses.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "User is not enrolled in any course",
+        quizzes: [],
+      });
+    }
+
+    // ✅ Match quizzes where courseId IN enrolledCourses
+    const quizzes = await Quiz.find({
+      courseId: { $in: enrolledCourses },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Quizzes fetched for enrolled courses",
+      quizzes,
+    });
+
+  } catch (error) {
+    console.error("Error fetching quizzes:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+
+// Submit Quiz Attempt
+exports.submitQuiz = async (req, res) => {
+  try {
+    const { quizId, userId } = req.params;
+    const { answers } = req.body;
+
+    console.log('Quiz Submission Request:', { quizId, userId, answers });
+
+    // Validate required fields
+    if (!quizId || !userId || !answers) {
+      return res.status(400).json({ 
+        message: 'Quiz ID, User ID, and answers are required',
+        required: ['quizId', 'userId', 'answers']
+      });
+    }
+
+    // Find the quiz
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) {
+      return res.status(404).json({ 
+        message: 'Quiz not found',
+        quizId 
+      });
+    }
+
+    // Calculate results
+    let totalScore = 0;
+    let totalPossiblePoints = 0;
+    let correctCount = 0;
+    let incorrectCount = 0;
+    let unansweredCount = 0;
+    const detailedResults = [];
+
+    quiz.questions.forEach(question => {
+      const questionId = question._id.toString();
+      const userAnswer = answers[questionId] || null;
+      const isCorrect = userAnswer === question.correctAnswer;
+      const points = question.points || 1;
+
+      totalPossiblePoints += points;
+
+      if (userAnswer === null) {
+        unansweredCount++;
+        detailedResults.push({
+          questionId,
+          question: question.question,
+          userAnswer: null,
+          correctAnswer: question.correctAnswer,
+          isCorrect: false,
+          points,
+          earnedPoints: 0,
+          status: 'unanswered'
+        });
+      } else if (isCorrect) {
+        totalScore += points;
+        correctCount++;
+        detailedResults.push({
+          questionId,
+          question: question.question,
+          userAnswer,
+          correctAnswer: question.correctAnswer,
+          isCorrect: true,
+          points,
+          earnedPoints: points,
+          status: 'correct'
+        });
+      } else {
+        incorrectCount++;
+        detailedResults.push({
+          questionId,
+          question: question.question,
+          userAnswer,
+          correctAnswer: question.correctAnswer,
+          isCorrect: false,
+          points,
+          earnedPoints: 0,
+          status: 'incorrect'
+        });
+      }
+    });
+
+    const percentage = totalPossiblePoints > 0 
+      ? Math.round((totalScore / totalPossiblePoints) * 100) 
+      : 0;
+
+    const summary = {
+      totalQuestions: quiz.questions.length,
+      attempted: quiz.questions.length - unansweredCount,
+      correct: correctCount,
+      incorrect: incorrectCount,
+      unanswered: unansweredCount,
+      totalScore,
+      totalPossiblePoints,
+      percentage,
+      grade: getGrade(percentage)
+    };
+
+    // Check for existing attempt
+    let quizAttempt = await QuizAttempt.findOne({ quizId, studentId: userId });
+
+    if (quizAttempt) {
+      // Update
+      quizAttempt.answers = answers;
+      quizAttempt.score = totalScore;
+      quizAttempt.percentage = percentage;
+      quizAttempt.correctCount = correctCount;
+      quizAttempt.incorrectCount = incorrectCount;
+      quizAttempt.unansweredCount = unansweredCount;
+      quizAttempt.detailedResults = detailedResults;
+      quizAttempt.submittedAt = new Date();
+      await quizAttempt.save();
+    } else {
+      // Create new attempt
+      quizAttempt = new QuizAttempt({
+        quizId,
+        studentId: userId,
+        courseId: quiz.courseId,
+        answers,
+        score: totalScore,
+        percentage,
+        correctCount,
+        incorrectCount,
+        unansweredCount,
+        detailedResults,
+        totalQuestions: quiz.questions.length,
+        totalPossiblePoints,
+        submittedAt: new Date()
+      });
+      await quizAttempt.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Quiz submitted successfully',
+      quizInfo: {
+        id: quiz._id,
+        title: quiz.title,
+        description: quiz.description,
+        mentorId: quiz.mentorId,
+        courseId: quiz.courseId
+      },
+      userInfo: { userId },
+      summary,
+      results: detailedResults,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error submitting quiz:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error submitting quiz', 
+      error: error.message 
+    });
+  }
+};
+
+// Helper function to get grade
+function getGrade(percentage) {
+  if (percentage >= 90) return 'A+';
+  if (percentage >= 80) return 'A';
+  if (percentage >= 70) return 'B';
+  if (percentage >= 60) return 'C';
+  if (percentage >= 50) return 'D';
+  return 'F';
+}
+
+
+
+exports.getUserQuizPerformance = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
+    // 🔍 Get all attempts of this user
+    const attempts = await QuizAttempt.find({ studentId: userId })
+      .populate("quizId", "title courseId")
+      .sort({ submittedAt: -1 });
+
+    if (!attempts.length) {
+      return res.status(200).json({
+        success: true,
+        message: "No quiz attempts found",
+        summary: {
+          totalQuizzesAttempted: 0,
+          totalScore: 0,
+          totalPossiblePoints: 0,
+          percentage: 0,
+        },
+        quizzes: [],
+      });
+    }
+
+    let overallScore = 0;
+    let overallTotalPoints = 0;
+
+    const quizzes = attempts.map((attempt) => {
+      overallScore += attempt.score || 0;
+      overallTotalPoints += attempt.totalPossiblePoints || 0;
+
+      return {
+        quizId: attempt.quizId?._id,
+        quizTitle: attempt.quizId?.title,
+        courseId: attempt.courseId,
+
+        // 📊 Summary
+        totalQuestions: attempt.totalQuestions,
+        correctAnswers: attempt.correctCount,
+        wrongAnswers: attempt.incorrectCount,
+        unanswered: attempt.unansweredCount,
+
+        score: attempt.score,
+        totalPossiblePoints: attempt.totalPossiblePoints,
+        percentage: attempt.percentage,
+
+        // 🧠 Question-wise performance (already calculated)
+        questions: attempt.detailedResults.map((q) => ({
+          questionId: q.questionId,
+          question: q.question,
+          selectedAnswer: q.userAnswer,
+          correctAnswer: q.correctAnswer,
+          isCorrect: q.isCorrect,
+          status: q.status,
+          points: q.points,
+          earnedPoints: q.earnedPoints,
+        })),
+
+        submittedAt: attempt.submittedAt,
+      };
+    });
+
+    const overallPercentage =
+      overallTotalPoints > 0
+        ? ((overallScore / overallTotalPoints) * 100).toFixed(2)
+        : 0;
+
+    res.status(200).json({
+      success: true,
+      message: "User quiz performance fetched successfully",
+      userId,
+      summary: {
+        totalQuizzesAttempted: attempts.length,
+        totalScore: overallScore,
+        totalPossiblePoints: overallTotalPoints,
+        percentage: overallPercentage,
+      },
+      quizzes,
+    });
+  } catch (error) {
+    console.error("Error fetching user quiz performance:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+exports.getUserProfile = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
+    const user = await UserRegister.findById(userId).select(
+      "-password -__v"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "User profile fetched successfully",
+      profile: user,
+    });
+  } catch (error) {
+    console.error("Error fetching user profile:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+exports.getAttendanceByUserId = async (req, res) => {
+  try {
+    const { userId: mongoUserId } = req.params; // Mongo ObjectId in params
+
+    if (!mongoose.Types.ObjectId.isValid(mongoUserId)) {
+      return res.status(400).json({ success: false, message: "Invalid userId" });
+    }
+
+    // 🔍 Step 1: Get the custom userId from UserRegister
+    const user = await UserRegister.findById(mongoUserId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const customUserId = user.userId; // ex: "HICAP2130"
+
+    // 🔍 Step 2: Find all attendance records that have this customUserId
+    const attendances = await Attendance.find({ "attendance.userId": customUserId }).sort({ createdAt: -1 });
+
+    if (!attendances.length) {
+      return res.status(404).json({
+        success: false,
+        message: `No attendance records found for userId: ${customUserId}`
+      });
+    }
+
+    // 📌 Step 3: Flatten all attendance arrays and filter only this user
+    const userAttendance = attendances.reduce((acc, record) => {
+      const filtered = record.attendance.filter(a => a.userId === customUserId);
+      return acc.concat(filtered);
+    }, []);
+
+    return res.status(200).json({
+      success: true,
+      mongoUserId,
+      customUserId,
+      totalRecords: userAttendance.length,
+      attendance: userAttendance
+    });
+  } catch (error) {
+    console.error("Error fetching user attendance:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching user attendance.",
+      error: error.message
     });
   }
 };
