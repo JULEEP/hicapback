@@ -18,7 +18,7 @@ const enrollmentSchema = new mongoose.Schema({
   ],
    status: { 
     type: String, 
-    enum: ['Upcoming', 'Ongoing', 'Completed'], 
+    enum: ['Upcoming', 'Ongoing', 'Completed', 'Fast', 'Fast Track Course'], 
     default: 'Upcoming' // Default is "Upcoming"
   },
 }, { timestamps: true });
